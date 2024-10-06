@@ -39,8 +39,8 @@ async def main(room_url, token, bot_config):
     rtai = RTVIProcessor(
         transport=transport,
         setup=RTVISetup(config=RTVIConfig(**bot_config)),
-        llm_api_key=os.getenv("OPENAI_API_KEY", ""),
-        tts_api_key=os.getenv("CARTESIA_API_KEY", ""))
+        llm_api_key="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",
+        tts_api_key="c6e8b60d-7d5a-40e1-8f40-cc427ee8e747")
 
     runner = PipelineRunner()
 
