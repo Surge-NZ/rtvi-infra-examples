@@ -8,20 +8,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper, DailyRoomObject, DailyRoomProperties, DailyRoomParams
-from pipecat.processors.frameworks.rtvi import RTVIConfig
 
 from dotenv import load_dotenv
 import traceback
 from loguru import logger
+import json
 
 # Load environment variables
 load_dotenv(override=True)
 
-# ------------ Fast API Config ------------ #
+# ------------ FastAPI Config ------------ #
 
 MAX_SESSION_TIME = 15 * 60  # 15 minutes
 DAILY_API_URL = "https://api.daily.co/v1"
-DAILY_API_KEY = "da9d3f554c229d6aeae120569448521c9cb5af2c696e31c83f6e4ddfff41f097"
+DAILY_API_KEY = os.getenv("DAILY_API_KEY")  # Ensure this is set in your environment variables
 
 app = FastAPI()
 
@@ -34,9 +34,6 @@ app.add_middleware(
 )
 
 # ------------ Helper Methods ------------ #
-
-def escape_bash_arg(s):
-    return "'" + s.replace("'", "'\\''") + "'"
 
 def check_host_whitelist(request: Request):
     host_whitelist = ""
@@ -55,7 +52,7 @@ def check_host_whitelist(request: Request):
 
     return False
 
-# ------------ Fast API Routes ------------ #
+# ------------ FastAPI Routes ------------ #
 
 @app.middleware("http")
 async def allowed_hosts_middleware(request: Request, call_next):
@@ -79,22 +76,24 @@ async def index(request: Request) -> JSONResponse:
             return JSONResponse({"test": True})
 
         if "config" not in data:
-            raise Exception("Missing RTVI configuration object for bot")
+            raise Exception("Missing configuration object for bot")
 
-        logger.debug("RTVI config found in request")
+        logger.debug("Configuration found in request")
     except Exception as e:
         logger.error(f"Error parsing request: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Missing or malformed configuration object")
 
     try:
-        # Parse the bot configuration
-        bot_config = RTVIConfig(**data["config"])
-        logger.debug(f"Parsed bot configuration: {bot_config}")
+        # Parse the botType and clientInfo from the request
+        bot_type = data["config"].get("botType", "defaultBot")
+        client_info = data["config"].get("clientInfo", {})
+        logger.debug(f"Bot type: {bot_type}")
+        logger.debug(f"Client info: {client_info}")
     except Exception as e:
-        logger.error(f"Failed to parse bot configuration: {e}")
+        logger.error(f"Failed to parse bot type or client info: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to parse bot configuration")
+        raise HTTPException(status_code=500, detail="Failed to parse bot type or client info")
 
     try:
         # Create a Daily REST helper instance
@@ -125,22 +124,31 @@ async def index(request: Request) -> JSONResponse:
         raise HTTPException(status_code=500, detail="Failed to create room or get token")
 
     try:
-        bot_file_path = Path("/app/bot/bot.py")
-        # Convert bot_config to a JSON string directly for subprocess
-        config_json = bot_config.model_dump_json()
+        # Decide which bot script to run based on bot_type
+        if bot_type == 'salesBot':
+            bot_file_path = Path("/app/bot/bot.py")
+        elif bot_type == 'customerCareBot':
+            bot_file_path = Path("/app/bot/customer_care_bot.py")
+        # Add more elif statements for other bot types
+        else:
+            # Default bot
+            bot_file_path = Path("/app/bot/default_bot.py")
 
         # Ensure that `bot_file_path` is a file, not a directory
         if not bot_file_path.is_file():
             logger.error(f"Bot file does not exist: {bot_file_path}")
             raise FileNotFoundError(f"Bot file does not exist at path: {bot_file_path}")
 
+        # Pass client_info to the bot script as a JSON string
+        client_info_json = json.dumps(client_info)
+
         subprocess.Popen(
-            ["python3", str(bot_file_path), "-u", room.url, "-t", token, "-c", config_json],
+            ["python3", str(bot_file_path), "-u", room.url, "-t", token, "-c", client_info_json],
             shell=False,
             bufsize=1,
             cwd=bot_file_path.parent
         )
-        logger.debug("Started bot subprocess successfully")
+        logger.debug(f"Started bot subprocess for bot type '{bot_type}' successfully")
     except Exception as e:
         logger.error(f"Failed to start subprocess: {e}")
         traceback.print_exc()
@@ -153,7 +161,6 @@ async def index(request: Request) -> JSONResponse:
             "room_name": room.name,
             "room_url": room.url,
             "token": user_token,
-            "bot_config": bot_config.model_dump_json()
         })
     except Exception as e:
         logger.error(f"Failed to get user token: {e}")
@@ -166,7 +173,7 @@ if __name__ == "__main__":
     import uvicorn
 
     default_host = "0.0.0.0"
-    default_port = int("7860")
+    default_port = int(os.getenv("PORT", "7860"))
 
     parser = argparse.ArgumentParser(
         description="RTVI Bot Runner")
