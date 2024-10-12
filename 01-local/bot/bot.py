@@ -3,6 +3,8 @@ import sys
 import os
 import argparse
 import json
+import aiohttp
+from datetime import datetime
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -23,6 +25,10 @@ load_dotenv(override=True)
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
 
+def generate_function_prompt(function_definitions):
+    function_descriptions = "\n".join([f"{fn['name']}: {fn['description']}" for fn in function_definitions])
+    return f"You can also call these functions if needed:\n{function_descriptions}"
+
 def load_company_info():
     try:
         with open('/app/bot/necta.txt', 'r') as file:
@@ -31,19 +37,107 @@ def load_company_info():
         logger.error(f"Error reading company info: {e}")
         return 'Necta helps you source candidates using AI.'
 
-def compose_system_prompt(client_info):
+
+
+def compose_greeting(client_info):
+    current_hour = datetime.now().hour
+    if current_hour < 12:
+        greeting_time = "Good morning"
+    else:
+        greeting_time = "Good afternoon"
+    return f"{greeting_time} {client_info.get('name', 'there')}, this is Nelly from Necta. How are you today?"
+
+def compose_goal():
+    return (
+        "Your main goal is to keep the conversation short, focused, and oriented towards booking a demo with Jack, our COO. "
+        "Start by introducing yourself confidently and mentioning Necta briefly, establishing a friendly tone. "
+        "Then, ask open-ended questions to understand the prospect's needs and challenges, and communicate the value that Necta provides. "
+        "If the opportunity arises, propose booking a demo with Jack. "
+        "always ask open ended questions to understand the prospects needs and challenges, and communicate the value that Necta provides if it fits. "
+        "answer objection handling calmly and confidently, and steer the conversation towards booking a demo if the opportunity presents itself. "
+        
+    )
+
+def compose_qualification_guidance():
+    return (
+        "After the introduction, ask open-ended questions to understand the prospect's needs and challenges. "
+        "Quickly communicate the value that Necta provides, such as using AI to source and shortlist the right candidate for the right role at the right time, reducing time and effort for recruitment teams and avoiding CVs written by AI, focusing more on behaviour, skills and culture."
+        "Examples include: 'What are some of your current challenges in sourcing or evaluating candidates?' or 'Have you considered using AI to make your recruitment process more productive?' or 'what challenges do you currently face?'. "
+        "Listen actively to their responses, acknowledge their concerns, and steer the conversation towards booking a demo if the opportunity presents itself."
+    )
+
+def compose_objection_handling_guidance():
+    return (
+        "If the prospect raises objections, address them calmly and confidently. "
+        "Use facts, case studies, or success stories briefly to provide reassurance. "
+        "For example: 'Many of our clients had similar concerns, but they found that using Necta reduces 17 hours on average per hire. the time to hire reduces by 26%. End to End cost is reduced by 30%. The right candidate means they stay longer.' "
+        "Only dive into handling objections if they express a clear concern; otherwise, move forward in the conversation to booking a demo to see how our product can work with your current process."
+    )
+
+def compose_closing_guidance():
+    return (
+        "Wrap up the conversation by summarizing how Necta can benefit them, and propose booking a demo with Jack, our COO. "
+        "Use a friendly but confident tone: 'I think a demo would be a great next step to show you exactly how we can help. Would you be open to setting one up with Jack?'"
+        "If they agree, confirm their contact details and schedule a suitable time for the demo. "
+        "If they decline, thank them for their time and ask if you can follow up with them in the future. "
+    )
+
+def compose_function_guidance(function_definitions):
+    function_list = generate_function_prompt(function_definitions)
+    return f"You can answer questions about Necta, but if a query is unrelated to Necta, check if you have a function that can handle it. {function_list}. Otherwise say you do not know and will get someone to call back."
+
+def compose_other_guidance(company_info):
+    return (
+        f"Always aim to book a demo, and if asked, admit that you are an AI. "
+        f"Keep answers concise and friendly, respond in short sentences, similar to how people chat in real conversations. "
+        f"Avoid lengthy explanations or going off-topic. If unsure, simply say, 'Let me find out for you.' "
+        f"Instead of saying 'Pause,' say 'One moment please'. Never be rude or anti social, never correct the client. "
+        f"Necta Information: {company_info}."
+    )
+
+def compose_system_prompt(client_info, function_definitions):
     company_info = load_company_info()
-    return f"""You are Nelly from Necta, a friendly sales representative designed for phone conversations. You are speaking with the following prospect: {json.dumps(client_info)}. Your main goal is to keep the conversation short, focused, and oriented towards booking a demo with Jack, our COO. Greet the prospect and ask if they've considered using AI to source and shortlist amazing candidates. You can answer questions about Necta, but for anything outside Necta, simply state that you don't know. Always aim to book a demo, always keep asking questions to keep the conversation going and if asked admit you are an AI not a human. Respond only with spoken words, keeping answers concise. Instead of saying Pause, say 'One moment please'. Necta Information: {company_info}. Start with: 'Hello {client_info.get('name', 'there')}, how are you today?'"""
+    greeting = compose_greeting(client_info)
+    goal = compose_goal()
+    qualification_guidance = compose_qualification_guidance()
+    objection_handling_guidance = compose_objection_handling_guidance()
+    closing_guidance = compose_closing_guidance()
+    function_guidance = compose_function_guidance(function_definitions)
+    other_guidance = compose_other_guidance(company_info)
+    location = client_info.get('location', 'Auckland, New Zealand')
+
+    return (
+        f"You are Nelly from Necta, a friendly and confident Senior Sales Development Agent designed for phone conversations, located in {location}. Ensure you respond in no more than two sentences at a time. "
+        f"You are speaking with the following prospect: {json.dumps(client_info)}. "
+        f"Although not explicit, the phone conversation should follow the sequence of greeting, qualification, objection handling and close. with the goal of: {goal}.  "
+        f"Start with: '{greeting}'. Then Qualification:{qualification_guidance}. Then Objection Handling:{objection_handling_guidance}. Finally Close:{closing_guidance} "
+        f"{function_guidance} {other_guidance} "
+        f"Remember to keep your responses short, conversational, and focused on booking a demo. "
+        f"If the prospect asks for specific information that you cannot provide directly, check if you have a function that can help. "
+        f"You can call these functions if needed: {generate_function_prompt(function_definitions)}. and you can provide a response. If there is no function to the question you can say 'I am not sure, let me get someone to call you back'."
+    )
 
 async def fetch_weather_from_api(llm, args):
     location = args.get('location', 'Unknown Location')
-    # Implement actual API call here, for now we'll use a static response
-    weather_info = {
-        "conditions": "sunny",
-        "temperature": "75°F",
-        "location": location
-    }
-    return weather_info
+    url = f"https://wttr.in/{location}?format=%C+%t"
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.text()
+                    weather_info = {
+                        "conditions": data.split()[0],
+                        "temperature": data.split()[1],
+                        "location": location
+                    }
+                    return weather_info
+                else:
+                    logger.error(f"Failed to fetch weather data: {response.status}")
+                    return {"error": "Unable to fetch weather information at this time"}
+        except Exception as e:
+            logger.error(f"Error fetching weather: {e}")
+            return {"error": "An error occurred while fetching weather information"}
 
 async def main(room_url, token, client_info):
     transport = DailyTransport(
@@ -81,7 +175,7 @@ async def main(room_url, token, client_info):
             'messages': [
                 {
                     'role': 'system',
-                    'content': compose_system_prompt(client_info)
+                    'content': compose_system_prompt(client_info, function_definitions)
                 }
             ],
             'functions': function_definitions
