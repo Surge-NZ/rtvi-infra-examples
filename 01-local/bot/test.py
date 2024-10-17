@@ -7,7 +7,8 @@ import argparse
 import json
 import aiohttp
 from datetime import datetime
-
+# import pipecat.processors.frameworks.rtvi as rtvi
+# print(dir(rtvi))
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.pipeline.runner import PipelineRunner
@@ -18,6 +19,7 @@ from pipecat.processors.frameworks.rtvi import (
 from pipecat.frames.frames import EndFrame
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 from pipecat.vad.silero import SileroVADAnalyzer
+
 from twilio_media_streams import TwilioTransport, TwilioParams
 
 from loguru import logger
